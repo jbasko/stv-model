@@ -6,7 +6,7 @@ from stv_model.model import Ballot, Candidate, Election
 @pytest.fixture()
 def abcd_election():
     candidates = {cid: Candidate(id=cid) for cid in "ABCD"}
-    el = Election(seats=2, candidates=candidates)
+    el = Election(num_seats=2, candidates=candidates)
     return el
 
 
@@ -39,7 +39,7 @@ def test_num_ballots_and_quota_and_tally(abcd_election):
     abcd_election.register_ballot(Ballot(id="b3", prefs=("A", "D")))
     abcd_election.register_ballot(Ballot(id="b4", prefs=("C", "B", "A")))
 
-    assert abcd_election.seats == 2
+    assert abcd_election.num_seats == 2
 
     abcd_election._calc_num_ballots()
     assert abcd_election.num_ballots == 4
@@ -47,7 +47,7 @@ def test_num_ballots_and_quota_and_tally(abcd_election):
     abcd_election._calc_quota()
     assert abcd_election.quota == 2  # (4 // (2 + 1)) + 1 = 2
 
-    abcd_election.tally()
+    abcd_election.run_tally()
     assert abcd_election.candidates["A"].tally == 2.0
     assert abcd_election.candidates["B"].tally == 1.0
     assert abcd_election.candidates["C"].tally == 1.0

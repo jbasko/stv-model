@@ -37,7 +37,7 @@ def generate_random_ballots(
 def test_election():
     candidates = {c.id: c for c in generate_candidates()}
     el = Election(
-        seats=5,
+        num_seats=5,
         candidates=candidates,
     )
     for ballot in generate_random_ballots(

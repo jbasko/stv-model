@@ -2,11 +2,11 @@ import dataclasses
 import itertools
 import logging
 import math
-from typing import Literal
-
+import os
+import time
+from typing import Literal, Self, Sequence
 
 logger = logging.getLogger(__name__)
-
 
 BallotId = str
 CandidateId = str
@@ -42,7 +42,6 @@ class Slice:
     last_transfer_reason: Reason | None = None
 
 
-
 @dataclasses.dataclass
 class Candidate:
     """
@@ -50,13 +49,38 @@ class Candidate:
     """
     id: CandidateId
     status: Literal["running", "elected", "eliminated"] = "running"
-    tally: float = 0.0
+    tallies: list[float] = dataclasses.field(default_factory=lambda: [0.0])
+
+    # Balsu kopsumma brīdī, kad kandidāts beidz dalību (ievēlēts vai izslēgts).
+    tally_before_done: float = 0.0
+
+    @property
+    def tally(self) -> float:
+        if not self.tallies:
+            return 0.0
+        return self.tallies[-1]
+
+    @property
+    def is_elected(self) -> bool:
+        return self.status == "elected"
+
+    @property
+    def is_running(self) -> bool:
+        return self.status == "running"
+
+    @property
+    def is_eliminated(self) -> bool:
+        return self.status == "eliminated"
 
 
-class Sort:
+class Key:
     @staticmethod
-    def by_tally_desc(candidate: Candidate):
-        return -candidate.tally
+    def by_tally_desc_then_id(candidate: Candidate):
+        """
+        Atslēga kandidātu salīdzināšanai neizšķirta gadījumā, izmantojot iepriekšējo kārtu rezultātus,
+        un pašās beigās kandidāta ID alfabētisko secību.
+        """
+        return tuple([-1 * t for t in reversed(candidate.tallies)]), candidate.id
 
 
 class Election:
@@ -66,20 +90,35 @@ class Election:
     Piešķīrums ("šķēle", _slice_ angliski) ir iekšējs objekts un tam nav juridiskas nozīmes vēlēšanu procesā.
     """
 
+    @classmethod
+    def from_votes(cls, *, votes: list[Sequence[CandidateId]] | str, num_seats: int) -> Self:
+        if isinstance(votes, str):
+            votes = [line.strip() for line in votes.splitlines(keepends=False)]
+        election = cls(num_seats=num_seats)
+        for i, prefs in enumerate(votes, start=1):
+            for pref in prefs:
+                if pref not in election.candidates:
+                    election.register_candidate(Candidate(id=pref))
+            ballot = Ballot(id=str(i), prefs=tuple(prefs))
+            election.register_ballot(ballot)
+        return election
+
     def __init__(
         self,
         *,
-        seats: int,
+        num_seats: int,
         candidates: dict[CandidateId, Candidate] = None,
     ):
         # Mandātu skaits
-        self.seats = seats
+        self.num_seats = num_seats
 
         # Droop kvota
-        self.quota: float = None
+        self.quota: int = None
 
-        # Pašreizējā skaitīšanas kārta
-        self.round_no = 0
+        # Pašreizējā skaitīšanas kārta, numurēta no 0.
+        # "-1" nozīmē, ka skaitīšana vēl nav sākusies.
+        # Skatīt arī self.round_no, kas ir faktiskais kārtas numurs, sākot no 1.
+        self._round_idx = -1
 
         # Dinamiski aprēķināts derīgo vēlēšanu zīmju skaits
         self.num_ballots: int = None
@@ -115,6 +154,139 @@ class Election:
         assert ballot.id not in self.ballot_slices
         self.ballots[ballot.id] = ballot
         self._create_slice(ballot)
+
+    def reset(self):
+        """
+        Atiestata skaitīšanas stāvokli, lai varētu sākt no jauna.
+        """
+        self._round_idx = 0
+        self.num_ballots = None
+        self.quota = None
+        self.slices = {}
+        self.ballot_slices = {}
+        self.piles = {}
+        self._slice_id = 1
+
+        for candidate in self.candidates.values():
+            candidate.status = "running"
+            candidate.tallies = []
+
+        for ballot in self.ballots.values():
+            self._create_slice(ballot)
+
+    def run_count(self, *, max_rounds=100, sleep_between_rounds: float = 0.0):
+        """
+        Galvenā skaitīšana.
+        """
+        assert self.round_no == 0, "Pilno skaitīšanu var veikt tikai vienu reizi."
+
+        while self.num_elected < self.num_seats and self.round_no < max_rounds:
+            self._run_round()
+
+            # Demo ģenerēšanai
+            if sleep_between_rounds:
+                time.sleep(sleep_between_rounds)
+                os.system("clear")
+
+        if self.round_no >= max_rounds:
+            logger.warning(f"Sasniegts maksimālais skaitīšanas kārtu skaits ({max_rounds}).")
+
+    def _run_round(self):
+        """
+        Veic vienu skaitīšanas kārtu.
+        """
+        self._round_idx += 1
+
+        if self.num_elected >= self.num_seats:
+            logger.warning("Visi mandāti jau ir piešķirti.")
+            return
+
+        if self.round_no == 1:
+            self._calc_num_ballots()
+            self._calc_quota()
+
+            logger.info(
+                f"Sākam skaitīšanu. "
+                f"Mandātu skaits: {self.num_seats}, "
+                f"derīgās vēlēšanu zīmes: {self.num_ballots}, "
+                f"kvota: {self.quota}."
+            )
+
+            self.run_tally()
+
+        ranked_candidates = list(c for c in self._get_candidates_by_tally() if c.is_running)
+        assert ranked_candidates, "Nav kandidātu, kuri varētu tikt ievēlēti vai izslēgti."
+
+        elected = [
+            c.id
+            for c in ranked_candidates
+            if c.is_running and c.tally >= self.quota
+        ]
+
+        if elected:
+            # Vispirms atzīmē kā ievēlētus un tikai tad pārdala pārpalikumu,
+            # jo pārdalei jānotiek tikai starp vēl aktīvajiem kandidātiem.
+
+            for candidate_id in elected:
+                self.candidates[candidate_id].status = "elected"
+
+            for candidate_id in elected:
+                self.elect(candidate_id)
+
+            if self.num_to_elect == self.num_running:
+                self._finish_run()
+                return
+
+        else:
+            # Ir jāizslēdz kāds kandidāts.
+
+            if self.num_to_elect == self.num_running - 1:
+                # Tieši viens jāizslēdz, pārējie ievēlēti.
+                to_eliminate = ranked_candidates[-1].id
+                self.eliminate(to_eliminate, transfer_surplus=False)
+                self._finish_run()
+                return
+
+            if self.num_to_elect == self.num_running:
+                self._finish_run()
+                return
+
+            # Ja ir vairāki kandidāti ar pašu mazāko balsu kopsummu, visi ir potenciāli izslēdzami.
+            # Taču nedrīkst veikt izslēgšanu, ja pēc izslēgšanas būs par maz kandidātu atlikuši.
+            smallest_tally = ranked_candidates[-1].tally
+            eliminable = [
+                c.id
+                for c in reversed(ranked_candidates)
+                if c.tally == smallest_tally  # TODO floating point precizitātes jautājums!!
+            ]
+
+            if len(eliminable) > 1:
+                logger.warning(
+                    f"Neizšķirts starp vairākiem kandidātiem ar balsu kopsummu {smallest_tally:.3f} "
+                    f"par izslēgšanu."
+                )
+            for candidate_id in eliminable[:self.num_running - self.num_to_elect]:
+                self.eliminate(candidate_id)
+
+            if self.num_to_elect == self.num_running:
+                self._finish_run()
+                return
+
+        self.run_tally()
+        self._log_counts()
+
+        logger.info("********************************************************************")
+
+    def _finish_run(self):
+        if self.num_to_elect == self.num_running:
+            # Ievēlam visus atlikušos.
+            for c in self.candidates.values():
+                if c.is_running:
+                    self.elect(c.id, transfer_surplus=False)  # Nav jēgas pārdalīt pārpalikumu.
+
+        self.run_tally()
+        self._log_counts()
+        logger.info("********************************************************************")
 
     def _create_slice(self, ballot: Ballot) -> Slice | None:
         if not ballot.is_valid:
@@ -154,7 +326,7 @@ class Election:
                 self.slices[next_slice.id] = next_slice
                 self.ballot_slices.setdefault(ballot.id, []).append(next_slice.id)
                 self.piles.setdefault(candidate_id, []).append(next_slice.id)
-                logger.info(f"Pārdale par labu {candidate_id}: +{weight}")
+                logger.info(f"Pārdale par labu {candidate_id!r}: +{weight:.3f}")
                 return next_slice
             next_idx += 1
 
@@ -166,47 +338,60 @@ class Election:
         return slice_id
 
     @property
+    def round_no(self) -> int:
+        return self._round_idx + 1
+
+    @property
     def num_elected(self):
         return sum(1 for c in self.candidates.values() if c.status == "elected")
 
     @property
     def num_to_elect(self):
-        return self.seats - self.num_elected
+        return self.num_seats - self.num_elected
 
     @property
     def num_running(self):
         return sum(1 for c in self.candidates.values() if c.status == "running")
 
-    def tally(self):
+    def run_tally(self):
         """
         Saskaita balsis visiem kandidātiem.
+        Ir droši izsaukt vairākas reizes vienas kārtas laikā.
         """
-        for c in self.candidates.values():
-            c.tally = 0.0
         for candidate_id, pile in self.piles.items():
-            self.candidates[candidate_id].tally = math.fsum(
+            candidate = self.candidates[candidate_id]
+            tally = math.fsum(
                 self.slices[slice_id].weight for slice_id in pile
             )
+            if not candidate.tallies or len(candidate.tallies) < self.round_no:
+                candidate.tallies.append(tally)
+            else:
+                candidate.tallies[self._round_idx] = tally
 
-    def elect(self, candidate_id: CandidateId):
+    def elect(self, candidate_id: CandidateId, *, transfer_surplus: bool = True):
         candidate = self.candidates[candidate_id]
-        surplus = candidate.tally - self.quota
         candidate.status = "elected"
+
+        surplus = candidate.tally - self.quota
+        candidate.tally_before_done = candidate.tally
         logger.info(
-            f"Kārtā Nr. {self.round_no} ievēlēts kandidāts {candidate_id} "
-            f"ar balsu kopsummu {candidate.tally}, pārpalikums {surplus}."
+            f"Kārtā Nr. {self.round_no} ievēlēts kandidāts {candidate_id!r} "
+            f"ar balsu kopsummu {candidate.tally:.3f}, "
+            f"pārpalikums {surplus if surplus >= 0 else 'ir negatīvs'}."
         )
-        if surplus <= 0:
+        if not transfer_surplus or surplus <= 0:
             return
 
         """
         Pārpalikuma pārdale.
-        Pārdales koeficients = pārpalikums / kopsumma
+        Pārdales koeficients = pārpalikums / kopsumma.
+        
+        Sākotnējais piešķīrums tiek samazināts par (1 - pārdales koeficients),
         """
         transfer_quotient = surplus / candidate.tally
         remaining_quotient = 1.0 - transfer_quotient
 
-        logger.info(f"Pārdales koeficients: {transfer_quotient}.")
+        logger.info(f"Pārdales koeficients: {transfer_quotient:.3f}.")
 
         pile = list(self.piles.get(candidate.id, []))
 
@@ -220,16 +405,20 @@ class Election:
 
             self._build_next_slice(slice, weight=transfer_quotient * original_weight, reason="elected")
 
-        ...
-
-    def eliminate(self, candidate_id: CandidateId):
+    def eliminate(self, candidate_id: CandidateId, *, transfer_surplus: bool = True):
         candidate = self.candidates[candidate_id]
         candidate.status = "eliminated"
 
-        # Iztukšojam kaudzi pilnībā.
-        logger.info(f"Izslēdzam kandidātu {candidate_id} ar šī brīža balsu kopsummu {candidate.tally}.")
         pile = list(self.piles.get(candidate.id, []))
-        self.piles[candidate.id] = []
+        self.piles[candidate.id] = []  # Iztukšojam kaudzi pilnībā.
+
+        if not transfer_surplus:
+            logger.info(
+                f"Izslēdzam kandidātu {candidate_id!r} ar šī brīža balsu kopsummu {candidate.tally:.3f} bez pārdales."
+            )
+            return
+
+        logger.info(f"Izslēdzam kandidātu {candidate_id!r}, pārdalot viņa šī brīža balsu kopsummu {candidate.tally:.3f}.")
 
         for slice_id in pile:
             slice = self.slices[slice_id]
@@ -237,93 +426,35 @@ class Election:
             slice.weight = 0.0
             self._build_next_slice(slice, weight=transfer_value, reason="eliminated")
 
-
-    def _get_candidates_by_tally(self):
-        """
-        Atgriež kandidātus sakārtotus pēc balsu kopsummas dilstošā secībā
-        un neizšķirtu gadījumā pēc viņu rezultāta iepriekšējā(s) skaitīšanas kārtā.
-        """
-        for tally, candidates_group in itertools.groupby(sorted(self.candidates.values(), key=Sort.by_tally_desc), Sort.by_tally_desc):
-            candidates = list(candidates_group)
-            if len(candidates) > 1:
-                # TODO Ir neizšķirts! Pagaidām alfabētiskā secībā.
-                ...
-                if tally != self.quota:
-                    logger.warning(f"Neizšķirts starp vairākiem kandidātiem ar balsu kopsummu {tally}")
-                yield from sorted(candidates, key=lambda c: c.id)
-            else:
-                yield from candidates
-
     def _calc_num_ballots(self):
         self.num_ballots = int(sum(ballot.strength for ballot in self.ballots.values() if ballot.is_valid))
 
     def _calc_quota(self):
-        self.quota = math.floor(self.num_ballots / (self.seats + 1)) + 1.0
+        self.quota = math.floor(self.num_ballots / (self.num_seats + 1)) + 1
 
     def _log_counts(self):
-        for candidate_id, candidate in self.candidates.items():
+        for candidate_id in sorted(self.candidates.keys()):
+            candidate = self.candidates[candidate_id]
             logger.info(
-                f"{candidate_id}: {candidate.tally} "
-                f"{'IEVĒLĒTS' if candidate.status == 'elected' else ''}"
-                f"{'IZSLĒGTS' if candidate.status == 'eliminated' else ''}"
+                f"{candidate_id}: {candidate.tally:.3f} "
+                f"{'✅ IEVĒLĒTS' if candidate.status == 'elected' else ''}"
+                f"{'❌ IZSLĒGTS' if candidate.status == 'eliminated' else ''}"
             )
 
-    def run_count(self, max_rounds=100):
-        self.round_no = 0
+    def _get_candidates_by_tally(self):
+        """
+        Atgriež kandidātus sakārtotus pēc balsu kopsummas dilstošā secībā
+        un neizšķirtu gadījumā pēc viņu rezultāta iepriekšējā(s) skaitīšanas kārtā,
+        vai pēc ID, ja arī iepriekšējā(s) kārtā(s) ir neizšķirts.
 
-        while self.num_elected < self.seats and self.round_no < max_rounds:
-            self._run_round()
+        Pirmajā kārtā neizšķirtu gadījumā kandidāti tiek sakārtoti alfabētiskā secībā pēc ID.
 
-        if self.round_no >= max_rounds:
-            logger.warning(f"Sasniegts maksimālais skaitīšanas kārtu skaits ({max_rounds}).")
-
-    def _run_round(self):
-        if self.round_no == 0:
-            self._calc_num_ballots()
-            self._calc_quota()
-
-            logger.info(
-                f"Skaitīšana sākusies. Mandātu skaits: {self.seats}, "
-                f"derīgās vēlēšanu zīmes: {self.num_ballots}, kvota: {self.quota}, "
-                f"ievēlēti: {self.num_elected}."
-            )
-
-            self.tally()
-            self._log_counts()
-
-        self.round_no += 1
-        ranked_candidates = list(c for c in self._get_candidates_by_tally() if c.status == "running")
-
-        elected = [
-            c.id
-            for c in ranked_candidates
-            if c.status == "running" and c.tally >= self.quota
-        ]
-        if elected:
-            self.elect(elected[0])  # Tikai viens ievēlētais katrā kārtā
-        else:
-            if self.num_to_elect == self.num_running:
-                logger.info(
-                    f"Atlikušie ({self.num_running}) kandidāti visi ir ievēlēti, "
-                    f"jo brīvo mandātu skaits ir {self.num_to_elect}."
-                )
-                for c in ranked_candidates:
-                    self.elect(c.id)
-                self.tally()
-                self._log_counts()
-                logger.info("********************************************************************")
-                return
-
-            logger.warning("Neviens kandidāts netika ievēlēts šajā kārtā. Notiks izslēgšana.")
-            """
-            TODO
-            Nav pareizi izslēgt uzreiz visus, kam ir nulle balsu?
-            Laikam nē, jo var gadīties, ka kandidāts visiem ir otrā izvēle!
-            """
-            # Izslēdzam uzreiz visus, kuriem vispār nav balsu TODO Te vajag algoritmisku precizēšanu!
-            self.eliminate(ranked_candidates[-1].id)
-
-        self.tally()
-        self._log_counts()
-
-        logger.info("********************************************************************")
+        NEKĀDĀ GADĪJUMĀ nedrīkst izmantot nākamo kārtu rezultātus, jo tie vēl nav zināmi!
+        Tas var novest pie apburta loka. Tāda ir starptautiskā prakse.
+        """
+        for _, candidates_group in itertools.groupby(
+            sorted(self.candidates.values(), key=Key.by_tally_desc_then_id),
+            Key.by_tally_desc_then_id,
+        ):
+            candidates = list(candidates_group)
+            yield from candidates
