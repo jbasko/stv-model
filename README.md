@@ -10,9 +10,17 @@ kādu piedāvā Latvijā ieviest kustība _Bez partijām_.
 ## Zināmās problēmas
 
  * Testu gandrīz nav, tikai pavisam primitīvas lietas.
- * Svērtās balsis ar `float` zaudē precizitāti un var radīt nepareizus rezultātus salīdzināšanu dēļ.
 
-## Kā izmēģināt
+## Kā izmēģināt simulatoru
+
+```
+docker compose up
+```
+
+Atveram http://localhost:8000
+
+
+## Kā lietot kodā
 
 
 ```python

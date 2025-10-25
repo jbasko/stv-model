@@ -1,0 +1,8 @@
+services:
+  stv_demo_site:
+    image: stv_demo_site:latest
+    build:
+      context: .
+      dockerfile: docker/stv_demo_site.Dockerfile
+    ports:
+      - "8000:8000"

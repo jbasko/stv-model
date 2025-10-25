@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="lv">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>STV ievade: kandidāti un vēlēšanu zīmes</title>
+
+  <!-- Tabler 1.4.0 CSS (CDN) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/css/tabler.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/css/tabler-flags.min.css">
+  <style>
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .rank-row .handle {
+      cursor: grab;
+    }
+
+    .quota-bar {
+      height: 8px;
+    }
+    .events-box {
+      height: 160px;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <header class="navbar navbar-expand-md">
+    <div class="container-xl">
+      <a class="navbar-brand" href="#">Pārnesamās balss vēlēšanu sistēmas simulācija</a>
+    </div>
+  </header>
+
+  <div class="page-body">
+    <div class="container-xl">
+      <div class="row row-deck row-cards">
+
+        <!-- API -->
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">API iestatījumi</h3>
+            </div>
+            <div class="card-body">
+              <div class="row g-2">
+                <div class="col-sm-8 col-md-6">
+                  <div class="input-group">
+                    <span class="input-group-text">API_BASE</span>
+                    <input id="apiBase" type="url" class="form-control mono" placeholder="http://localhost:8000">
+                    <button class="btn btn-outline-primary" id="btnSaveApi">Saglabāt</button>
+                    <button class="btn btn-outline-secondary" id="btnPing">Ping</button>
+                  </div>
+                  <small class="form-hint">FastAPI bāze. Piem., <span class="mono">http://localhost:8000</span></small>
+                </div>
+              </div>
+              <div class="mt-2 text-secondary" id="apiStatus">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Simulācijas iestatījumi -->
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title">Simulācijas iestatījumi</h3></div>
+            <div class="card-body">
+              <div class="row g-2">
+                <div class="col-8 col-sm-6">
+                  <label class="form-label">Mandātu skaits</label>
+                  <input id="seats" type="number" min="5" max="7" value="5" class="form-control">
+                </div>
+                <div class="col-12 d-flex gap-2 align-items-end">
+                  <button class="btn btn-primary" type="button" id="btnSaveSettings">Saglabāt</button>
+                  <button class="btn btn-secondary" type="button" id="btnReloadSettings">Pārlādēt</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Kandidāti: pievienot -->
+        <div class="col-12 col-lg-6">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title">Pievienot kandidātu</h3></div>
+            <div class="card-body">
+              <form id="formAddCand" class="row g-2">
+                <div class="col-12">
+                  <label class="form-label">Vārds / saraksts</label>
+                  <input name="name" class="form-control" required placeholder="Piem., Jānis Bērziņš">
+                </div>
+<!--                <div class="col-6">-->
+<!--                  <label class="form-label">Krāsa</label>-->
+<!--                  <input name="color" type="color" value="#2f80ed" class="form-control">-->
+<!--                </div>-->
+<!--                <div class="col-6">-->
+<!--                  <label class="form-label">Papildu dati (opc.)</label>-->
+<!--                  <input name="meta" class="form-control" placeholder="brīvs teksts">-->
+<!--                </div>-->
+                <div class="col-12">
+                  <button class="btn btn-primary" type="submit">Pievienot</button>
+                  <button class="btn btn-secondary" type="button" id="btnReloadCand">Pārlādēt</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Kandidāti: saraksts -->
+        <div class="col-12 col-lg-6">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Kandidāti</h3>
+              <div class="card-actions">
+                <button class="btn btn-outline-danger btn-sm" id="btnDeleteAllCand">Dzēst visus</button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-vcenter card-table">
+                <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Vārds</th>
+<!--                  <th>Krāsa</th>-->
+                  <th class="w-1"></th>
+                </tr>
+                </thead>
+                <tbody id="tbodyCandidates">
+                <tr>
+                  <td colspan="4" class="text-secondary">Nav datu.</td>
+                </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="card-footer small text-secondary">
+              API: <span class="mono">GET/POST/DELETE /candidates</span>, <span
+              class="mono">DELETE /candidates/{id}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Vēlēšanu zīme: veidotājs -->
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title">Jauna vēlēšanu zīme</h3></div>
+            <div class="card-body">
+              <form id="formBallot" class="row g-3">
+                <div class="col-12 col-md-4">
+                  <label class="form-label">Svars</label>
+                  <input name="weight" type="number" min="1" value="1" class="form-control">
+                  <small class="form-hint">Lielāks svars nozīmē vairāk identisku vēlēšanu zīmju.</small>
+                </div>
+
+                <div class="col-12">
+                  <label class="form-label">Kandidātu sarindojums vēlamības secībā</label>
+                  <div id="rankList" class="list-group">
+                    <!-- dinamiskas rindu izvēlnes -->
+                  </div>
+                  <div class="mt-2">
+                    <button class="btn btn-outline-primary btn-sm" type="button" id="btnAddRank">Pievienot izvēli
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" id="btnClearRanks">Notīrīt</button>
+                  </div>
+                  <small class="form-hint">Izvēlies kandidātus bez dublikātiem. Rindas var vilkt (drag & drop).</small>
+                </div>
+
+                <div class="col-12">
+                  <button class="btn btn-primary" type="submit">Saglabāt vēlēšanu zīmi</button>
+                  <button class="btn btn-secondary" type="button" id="btnReloadBallots">Pārlādēt vēlēšanu zīmes</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Vēlēšanu zīmes: saraksts -->
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Vēlēšanu zīmes</h3>
+              <div class="card-actions">
+                <button class="btn btn-outline-danger btn-sm" id="btnDeleteAllBallots">Dzēst visus</button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-vcenter card-table">
+                <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Kandidātu secība</th>
+                  <th>Svars</th>
+                  <th class="w-1"></th>
+                </tr>
+                </thead>
+                <tbody id="tbodyBallots">
+                <tr>
+                  <td colspan="4" class="text-secondary">Nav datu.</td>
+                </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="card-footer small text-secondary">
+              API: <span class="mono">GET/POST/DELETE /ballots</span>, <span class="mono">DELETE /ballots/{id}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- STV kārtu skatītājs -->
+        <div class="col-12">
+          <div class="card" id="stvRoundsCard">
+            <div class="card-header">
+              <h3 class="card-title">Skaitīšanas gaita</h3>
+              <div class="card-actions d-flex align-items-center gap-2">
+                <!-- Poga ielādei -->
+                <button class="btn btn-primary btn-sm" type="button" id="btnLoadSimulation">Ielādēt skaitīšanu</button>
+
+                <!-- Navigācijas pogas -->
+                <div class="btn-group" role="group" aria-label="Step navigation">
+                  <button class="btn btn-outline-secondary" type="button" id="btnFirst" title="Uz pirmo">«</button>
+                  <button class="btn btn-outline-secondary" type="button" id="btnPrev" title="Iepriekšējā">←</button>
+                  <span class="mx-2" id="roundCounter" aria-live="polite">0/0</span>
+                  <button class="btn btn-outline-secondary" type="button" id="btnNext" title="Nākamā">→</button>
+                  <button class="btn btn-outline-secondary" type="button" id="btnLast" title="Uz pēdējo">»</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card-body">
+              <!-- Slideris ātrai pārlēkšanai starp kārtām -->
+              <input type="range" class="form-range mb-3" id="roundSlider" min="1" value="1">
+              <!-- Te ieliksim kārtas saturu -->
+              <div id="roundView"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer footer-transparent d-print-none">
+    <div class="container">
+      <div class="text-secondary">Tabler 1.4.0 CDN, vanilla JS.</div>
+    </div>
+  </footer>
+</div>
+
+<!-- Tabler 1.4.0 JS (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/js/tabler.min.js"></script>
+
+<script>
+  // ===== Config =====
+  const LS_KEY = 'stv.apiBase';
+  const api = {
+    get base() {
+      return localStorage.getItem(LS_KEY) || document.getElementById('apiBase').value || 'http://localhost:8000';
+    },
+    set base(v) {
+      localStorage.setItem(LS_KEY, v);
+    }
+  };
+
+  // ===== Helpers =====
+  const q = s => document.querySelector(s);
+  const el = (t, a = {}, ch = []) => {
+    const n = document.createElement(t);
+    for (const [k, v] of Object.entries(a)) {
+      if (k === 'class') n.className = v;
+      else if (k === 'style') n.style.cssText = v;
+      else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v);
+    }
+    for (const c of [].concat(ch)) n.append(c instanceof Node ? c : document.createTextNode(c));
+    return n;
+  };
+
+  async function apiFetch(path, opts = {}) {
+    const base = api.base.replace(/\/+$/, '');
+    if (!base) throw new Error('API_BASE nav iestatīts.');
+    const res = await fetch(base + path, {
+      headers: {'Content-Type': 'application/json'},
+      ...opts
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`HTTP ${res.status} — ${text}`);
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  // ===== API Facades =====
+  const Settings = {
+    get: () => apiFetch('/settings'),
+    update: (p) => apiFetch('/settings', {method: 'PUT', body: JSON.stringify(p)}),
+  };
+  const Candidates = {
+    list: () => apiFetch('/candidates'),
+    create: (p) => apiFetch('/candidates', {method: 'POST', body: JSON.stringify(p)}),
+    delete: (id) => apiFetch(`/candidates/${encodeURIComponent(id)}`, {method: 'DELETE'}),
+    deleteAll: () => apiFetch('/candidates', {method: 'DELETE'})
+  };
+  const Ballots = {
+    list: () => apiFetch('/ballots'),
+    create: (p) => apiFetch('/ballots', {method: 'POST', body: JSON.stringify(p)}),
+    delete: (id) => apiFetch(`/ballots/${encodeURIComponent(id)}`, {method: 'DELETE'}),
+    deleteAll: () => apiFetch('/ballots', {method: 'DELETE'})
+  };
+
+  // ===== API Settings UI =====
+  function initApiSettings() {
+    const input = q('#apiBase');
+    const saved = localStorage.getItem(LS_KEY);
+    if (saved) input.value = saved;
+
+    q('#btnSaveApi').addEventListener('click', () => {
+      api.base = input.value.trim();
+      q('#apiStatus').textContent = 'Saglabāts.';
+    });
+    q('#btnPing').addEventListener('click', async () => {
+      try {
+        const [cands, balls] = await Promise.allSettled([Candidates.list(), Ballots.list()]);
+        const candCount = cands.status === 'fulfilled' && Array.isArray(cands.value) ? cands.value.length : '—';
+        const ballCount = balls.status === 'fulfilled' && Array.isArray(balls.value) ? balls.value.length : '—';
+        q('#apiStatus').textContent = `OK. Kandidāti: ${candCount}, Vēlēšanu zīmes: ${ballCount}.`;
+      } catch (e) {
+        q('#apiStatus').textContent = 'Kļūda: ' + e.message;
+      }
+    });
+  }
+
+  function initSettings() {
+    const seatsEl = q('#seats');
+    q('#btnReloadSettings').addEventListener('click', async () => {
+      try {
+        const s = await Settings.get();
+        seatsEl.value = Math.max(1, Number(s.seats ?? 1));
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+    q('#btnSaveSettings').addEventListener('click', async () => {
+      const payload = {seats: Math.max(1, Number(seatsEl.value) || 1)};
+      try {
+        const s = await Settings.update(payload);
+        seatsEl.value = s.seats;
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+  }
+
+  // ===== Candidates Table =====
+  async function refreshCandidates() {
+    const tbody = q('#tbodyCandidates');
+    tbody.innerHTML = '<tr><td colspan="4" class="text-secondary">Ielādē…</td></tr>';
+    try {
+      const list = await Candidates.list();
+      // Cache for ballot builder
+      window.__CAND_CACHE = Array.isArray(list) ? list : [];
+      if (!Array.isArray(list) || list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-secondary">Nav datu.</td></tr>';
+        refreshRankSelectors();
+        return;
+      }
+      tbody.innerHTML = '';
+      list.forEach((c, i) => {
+        const color = c.color || '#2f80ed';
+        const id = c.id ?? c._id ?? c.uuid ?? c.name;
+        const tr = el('tr', {}, [
+          el('td', {}, [String(i + 1)]),
+          el('td', {}, [c.name || '—']),
+          // el('td', {}, [el('span', {class: 'badge', style: `background:${color}`}, [' '])]),
+          el('td', {class: 'text-end'}, [
+            el('button', {
+              class: 'btn btn-link text-danger', title: 'Dzēst', onclick: async () => {
+                if (!confirm('Dzēst kandidātu?')) return;
+                try {
+                  await Candidates.delete(id);
+                  await refreshCandidates();
+                  await refreshBallots();
+                } catch (e) {
+                  alert(e.message);
+                }
+              }
+            }, ['Dzēst'])
+          ])
+        ]);
+        tbody.appendChild(tr);
+      });
+      refreshRankSelectors();
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="4" class="text-danger">Kļūda: ${e.message}</td></tr>`;
+    }
+  }
+
+  function initAddCandidate() {
+    q('#formAddCand').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const payload = {
+        name: fd.get('name')?.toString().trim(),
+        color: fd.get('color')?.toString() || '#2f80ed',
+        meta: fd.get('meta')?.toString() || undefined
+      };
+      if (!payload.name) return;
+      try {
+        await Candidates.create(payload);
+        ev.target.reset();
+        await refreshCandidates();
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+    q('#btnReloadCand').addEventListener('click', refreshCandidates);
+    q('#btnDeleteAllCand').addEventListener('click', async () => {
+      if (!confirm('Dzēst visus kandidātus?')) return;
+      try {
+        await Candidates.deleteAll();
+        await refreshCandidates();
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+  }
+
+  // ===== Ballot Builder =====
+  function candidateOptionsHTML(selectedId) {
+    const list = window.__CAND_CACHE || [];
+    return ['<option value="">— izvēlies —</option>']
+      .concat(list.map(c => {
+        const id = c.id ?? c._id ?? c.uuid ?? c.name;
+        const sel = id === selectedId ? ' selected' : '';
+        return `<option value="${String(id)}"${sel}>${(c.name || id).toString()}</option>`;
+      })).join('');
+  }
+
+  function newRankRow(selectedId) {
+    const row = el('div', {class: 'list-group-item rank-row d-flex align-items-center gap-2'});
+    const handle = el('span', {class: 'handle text-secondary', title: 'Vilkt lai pārkārtotu'}, ['↕']);
+    const select = el('select', {class: 'form-select'});
+    select.innerHTML = candidateOptionsHTML(selectedId);
+    const btnDel = el('button', {class: 'btn btn-link text-danger ms-auto', type: 'button'}, ['Noņemt']);
+    btnDel.addEventListener('click', () => row.remove());
+    row.append(handle, select, btnDel);
+
+    // drag & drop (vienkāršs)
+    row.draggable = true;
+    row.addEventListener('dragstart', e => {
+      row.classList.add('opacity-50');
+      e.dataTransfer.setData('text/plain', 'drag');
+      window.__dragging = row;
+    });
+    row.addEventListener('dragend', () => row.classList.remove('opacity-50'));
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      const dragging = window.__dragging;
+      if (!dragging || dragging === row) return;
+      const list = q('#rankList');
+      const rect = row.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      list.insertBefore(dragging, before ? row : row.nextSibling);
+    });
+
+    return row;
+  }
+
+  function refreshRankSelectors() {
+    // atjauno visas select opcijas no kandidātu keša
+    qAll('#rankList select').forEach(sel => {
+      const cur = sel.value;
+      sel.innerHTML = candidateOptionsHTML(cur);
+    });
+  }
+
+  const qAll = s => Array.from(document.querySelectorAll(s));
+
+  function initBallotBuilder() {
+    const list = q('#rankList');
+    const addRank = () => list.appendChild(newRankRow());
+
+    q('#btnAddRank').addEventListener('click', addRank);
+    q('#btnClearRanks').addEventListener('click', () => list.innerHTML = '');
+
+    // startam ieliek pirmās 2 rindas
+    addRank();
+    addRank();
+
+    q('#formBallot').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const weight = Math.max(1, Number(fd.get('weight')) || 1);
+      const selects = qAll('#rankList select');
+      const chosen = [];
+      const seen = new Set();
+
+      for (const sel of selects) {
+        const val = sel.value.trim();
+        if (!val) continue;
+        if (seen.has(val)) {
+          alert('Dublikāti preferenču sarakstā nav atļauti.');
+          return;
+        }
+        seen.add(val);
+        chosen.push(val);
+      }
+      if (chosen.length === 0) {
+        alert('Norādi vismaz vienu preferenci.');
+        return;
+      }
+
+      const payload = {rankings: chosen, weight};
+      try {
+        await Ballots.create(payload);
+        // notīra tikai rankus, atstāj svaru
+        q('#rankList').innerHTML = '';
+        refreshBallots();
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+
+    // Pārlādēt un Dzēst viss
+    q('#btnReloadBallots').addEventListener('click', refreshBallots);
+    q('#btnDeleteAllBallots').addEventListener('click', async () => {
+      if (!confirm('Dzēst visas vēlēšanu zīmes?')) return;
+      try {
+        await Ballots.deleteAll();
+        await refreshBallots();
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+  }
+
+  // ===== Ballots Table =====
+  async function refreshBallots() {
+    const tbody = q('#tbodyBallots');
+    tbody.innerHTML = '<tr><td colspan="4" class="text-secondary">Ielādē…</td></tr>';
+    try {
+      const list = await Ballots.list();
+      const cands = Object.fromEntries((window.__CAND_CACHE || []).map(c => [(c.id ?? c._id ?? c.uuid ?? c.name), c]));
+      if (!Array.isArray(list) || list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-secondary">Nav datu.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      list.forEach((b, i) => {
+        const id = b.id ?? b._id ?? b.uuid ?? String(i);
+        const seq = Array.isArray(b.rankings) ? b.rankings.map(cid => (cands[cid]?.name || cid)).join(' > ') : '';
+        const tr = el('tr', {}, [
+          el('td', {}, [String(i + 1)]),
+          el('td', {}, [seq || '—']),
+          el('td', {}, [String(b.weight ?? 1)]),
+          el('td', {class: 'text-end'}, [
+            el('button', {
+              class: 'btn btn-link text-danger', type: 'button', onclick: async () => {
+                if (!confirm('Dzēst vēlēšanu zīmi?')) return;
+                try {
+                  await Ballots.delete(id);
+                  await refreshBallots();
+                } catch (e) {
+                  alert(e.message);
+                }
+              }
+            }, ['Dzēst'])
+          ])
+        ]);
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="4" class="text-danger">Kļūda: ${e.message}</td></tr>`;
+    }
+  }
+
+  // ===== STV Rounds Viewer (vienkārša komponente) =====
+  const STVRoundsViewer = (() => {
+    let rounds = [];      // [{ index, events: [str], candidates: [{id,name,votes,transfers?,status}] }]
+    let quota = null;    // number | null
+    let numBallots = null; // number | null
+    let seats = null;    // number | null
+    let cur = 1;
+
+    const viewEl = () => document.getElementById('roundView');
+    const sliderEl = () => document.getElementById('roundSlider');
+    const counter = () => document.getElementById('roundCounter');
+
+    const statusBadge = (status) => {
+      if (status === 'elected') return '<span class="badge bg-green text-white">ievēlēts</span>';
+      if (status === 'eliminated') return '<span class="badge bg-red text-white">izslēgts</span>';
+      return '<span class="badge bg-yellow text-black">turpina</span>';
+    };
+
+    function fmtInt(n) {
+      return (n ?? 0).toLocaleString('lv-LV');
+    }
+
+    function renderRound(r) {
+      if (!r) {
+        viewEl().innerHTML = '<div class="text-secondary">Nav datu.</div>';
+        return;
+      }
+
+      // Tabula ar kandidātiem šajā kārtā
+      const headerInfo = [
+        numBallots != null ? `<span class="me-3">Vēlēšanu zīmes: <span class="mono">${fmtInt(numBallots)}</span></span>` : '',
+        quota != null ? `<span class="me-3">Kvota: <span class="mono">${fmtInt(quota)}</span></span>` : '',
+        seats != null ? `<span>Mandāti: <span class="mono">${fmtInt(seats)}</span></span>` : ''
+      ].join('');
+
+      const rows = (r.candidates || []).map((c, i) => {
+        const v = Number(c.votes ?? 0);
+        const q = Number(quota ?? 0) * 1.25;  // Vizualizācijai izmantojam mazliet vairāk par kvotu, lai var redzēt pārsniegumus.
+        const pct = q > 0 ? Math.min(100, Math.round(v / q * 100)) : 0;
+        const transfers = c.transfers != null ? ` <span class="text-secondary">(${c.transfers > 0 ? '+' : ''}${fmtInt(c.transfers)})</span>` : '';
+        return `
+        <tr>
+          <td class="w-1">${i + 1}</td>
+          <td>${c.name ?? c.id}</td>
+          <td class="mono">${fmtInt(v)}${transfers}</td>
+          <td class="text-nowrap">${statusBadge(c.status)}</td>
+        </tr>
+        <tr class="bg-transparent">
+          <td colspan="4">
+            <div class="progress quota-bar">
+              <div class="progress-bar" role="progressbar" style="width:${pct}%"
+                   aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"></div>
+            </div>
+          </td>
+        </tr>
+      `;
+      }).join('');
+
+      const eventsBlock = (r.events && r.events.length)
+        ? `<ul class="mt-2 mb-0">${r.events.map(e => `<li class="text-secondary">${escapeHtml(e)}</li>`).join('')}</ul>`
+        : `<div class="text-secondary">Notikumu nav.</div>`;
+
+      viewEl().innerHTML = `
+      <div class="d-flex justify-content-between align-items-baseline mb-2">
+        <div><span class="text-secondary">Kārta</span> <span class="mono">${r.index}</span></div>
+        <div class="text-secondary">${headerInfo}</div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-vcenter card-table mb-2">
+          <thead>
+            <tr><th>#</th><th>Kandidāts</th><th>Balsis</th><th>Statuss</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="small">
+        <div class="text-secondary mt-3 mb-1"><h4>Notikumi</h4></div>
+        <div class="events-box">
+          ${eventsBlock}
+        </div>
+      </div>
+    `;
+    }
+
+    function setCounter() {
+      counter().textContent = `${Math.min(cur, rounds.length)}/${rounds.length || 0}`;
+    }
+
+    function go(n) {
+      if (!rounds.length) return;
+      cur = Math.max(1, Math.min(n, rounds.length));
+      sliderEl().value = String(cur);
+      setCounter();
+      renderRound(rounds[cur - 1]);
+    }
+
+    async function loadSimulation() {
+      const btn = document.getElementById('btnLoadSimulation');
+      if (!btn) return;
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Ielādē…';
+      try {
+        // Izsauc STV simulācijas endpointu
+        const sim = await apiFetch('/simulate', {
+          method: 'POST',
+          body: JSON.stringify({include_rounds: true})
+        });
+
+        // Ielādē rezultātu skatītājā
+        STVRoundsViewer.load(sim);
+      } catch (e) {
+        alert('Simulācijas ielādes kļūda: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    }
+
+    function bindControls() {
+      document.getElementById('btnLoadSimulation')?.addEventListener('click', loadSimulation);
+
+      document.getElementById('btnFirst')?.addEventListener('click', () => go(1));
+      document.getElementById('btnPrev')?.addEventListener('click', () => go(cur - 1));
+      document.getElementById('btnNext')?.addEventListener('click', () => go(cur + 1));
+      document.getElementById('btnLast')?.addEventListener('click', () => go(rounds.length));
+      sliderEl()?.addEventListener('input', (e) => go(Number(e.target.value) || 1));
+
+      // Klaviatūras šortkati: ← →
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          go(cur - 1);
+        }
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          go(cur + 1);
+        }
+      });
+    }
+
+    function load(data) {
+      // Sagaidāmais formāts:
+      // { quota: number|null, seats: number|null, rounds: [{ index:int, events:[str], candidates:[{id,name,votes,transfers?,status}] }]}
+      quota = data?.quota ?? null;
+      numBallots = data?.num_ballots ?? null;
+      seats = data?.seats ?? null;
+      rounds = Array.isArray(data?.rounds) ? data.rounds : [];
+      cur = 1;
+      const sld = sliderEl();
+      sld.min = '1';
+      sld.max = String(Math.max(1, rounds.length || 1));
+      sld.value = '1';
+      setCounter();
+      renderRound(rounds[0]);
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, m => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[m]));
+    }
+
+    // publiskā API
+    return {load, go, bindControls};
+  })();
+
+  // [ADD] Inicializācija pēc tavas boot() funkcijas starta
+  document.addEventListener('DOMContentLoaded', () => {
+    // vienreizēja kontrolieru piesaiste
+    STVRoundsViewer.bindControls();
+  });
+
+  // [ADD] Piemērs, kā ielādēt no servera (pielāgo savu endpointu):
+  // Piem., pēc simulācijas izsaukuma vai "Rādīt skaitīšanu" pogas:
+  // const sim = await apiFetch('/simulate?include_rounds=1'); // vai POST ar body
+  // STVRoundsViewer.load(sim);
+
+  // ===== Boot =====
+  (function boot() {
+    initApiSettings();
+    initAddCandidate();
+    initBallotBuilder();
+    initSettings();
+    if (api.base) {
+      refreshCandidates();
+      refreshBallots();
+      document.getElementById('btnReloadSettings')?.click();
+    }
+  })();
+</script>
+</body>
+</html>

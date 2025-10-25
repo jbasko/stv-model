@@ -1,5 +1,6 @@
 import logging
 import random
+from decimal import Decimal
 from typing import Sequence
 
 from stv_model.model import Election, Ballot, CandidateId, Candidate
@@ -30,7 +31,7 @@ def generate_random_ballots(
         yield Ballot(
             id=f"ballot_{i+1}",
             prefs=tuple(prefs),
-            strength=strength,
+            strength=Decimal(strength),
         )
 
 

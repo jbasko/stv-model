@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Pārnesamās balss (Single Transferable Vote, STV) vēlēšanu sistēmas skaitīšanas algoritma demonstrācija."
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "fastapi[standard]>=0.120.0",
+    "uvicorn>=0.38.0",
+]
 
 [dependency-groups]
 dev = [

@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import time
+from decimal import Decimal
 from typing import Literal, Self, Sequence
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,14 @@ BallotId = str
 CandidateId = str
 SliceId = int
 Reason = Literal["elected", "eliminated"]
+
+
+def quantize(value: Decimal, *, places: int = 6) -> Decimal:
+    """
+    Noapaļo decimālvērtību līdz norādītajam zīmju skaitam aiz komata.
+    """
+    quantize_str = "1." + ("0" * places)
+    return value.quantize(Decimal(quantize_str))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -24,7 +33,7 @@ class Ballot:
 
     # Normāli katrai balsij vērtība ir 1.0, bet testēšanai un simulācijām ir ērti to mainīt.
     # Piemēram, viena vēlēšanu zīme var reprezentēt 1000 identiskas vēlēšanu zīmes.
-    strength: float = 1.0
+    strength: Decimal = Decimal("1.0")
 
     @property
     def is_valid(self) -> bool:
@@ -36,7 +45,7 @@ class Slice:
     id: SliceId
     ballot_id: BallotId
     current_idx: int = 0  # Indekss vēlēšanu zīmes preferenču sarakstā
-    weight: float = 1.0
+    weight: Decimal = Decimal("1.0")
     assigned_to: CandidateId | None = None
     last_transfer_round: int | None = None
     last_transfer_reason: Reason | None = None
@@ -49,15 +58,18 @@ class Candidate:
     """
     id: CandidateId
     status: Literal["running", "elected", "eliminated"] = "running"
-    tallies: list[float] = dataclasses.field(default_factory=lambda: [0.0])
+    tallies: list[Decimal] = dataclasses.field(default_factory=lambda: [Decimal("0")])
+
+    # Balsu kopsumma uzreiz pēc pirmās skaitīšanas, pirms jebkādas pārdales.
+    tally_after_first: Decimal = Decimal("0")
 
     # Balsu kopsumma brīdī, kad kandidāts beidz dalību (ievēlēts vai izslēgts).
-    tally_before_done: float = 0.0
+    tally_before_done: Decimal = Decimal("0")
 
     @property
-    def tally(self) -> float:
+    def tally(self) -> Decimal:
         if not self.tallies:
-            return 0.0
+            return Decimal("0")
         return self.tallies[-1]
 
     @property
@@ -81,6 +93,14 @@ class Key:
         un pašās beigās kandidāta ID alfabētisko secību.
         """
         return tuple([-1 * t for t in reversed(candidate.tallies)]), candidate.id
+
+
+@dataclasses.dataclass
+class CandidateLog:
+    id: CandidateId
+    round_no: int = None
+    status: Literal["running", "elected", "eliminated"] = None
+    transfer: Decimal = Decimal(0)
 
 
 class Election:
@@ -138,6 +158,12 @@ class Election:
         # Kaudzes ar vēlēšanu zīmju piešķīrumiem pēc kandidāta ID
         self.piles: dict[CandidateId, list[SliceId]] = {}
 
+        # Notikumi katrā kārtā (demonstrācijas nolūkiem)
+        self.event_logs: dict[int, list[str]] = {}
+
+        # Kandidātu statusi katrā kārtā (demonstrācijas nolūkiem)
+        self.candidate_logs: dict[int, dict[CandidateId, CandidateLog]] = {}
+
         # Piešķīrumu ID ģenerēšanai
         self._slice_id: SliceId = 1
 
@@ -189,13 +215,41 @@ class Election:
                 os.system("clear")
 
         if self.round_no >= max_rounds:
+            self.log_event("Sasniegts maksimālais skaitīšanas kārtu skaits.")
             logger.warning(f"Sasniegts maksimālais skaitīšanas kārtu skaits ({max_rounds}).")
+        else:
+            self.log_event(f"Skaitīšana pabeigta {self.round_no} kārtā(s).")
+
+    def _collect_round_log(self):
+        self.candidate_logs.setdefault(self._round_idx, {})
+        for candidate_id, candidate in self.candidates.items():
+            if candidate_id not in self.candidate_logs[self._round_idx]:
+                self.candidate_logs[self._round_idx][candidate_id] = CandidateLog(id=candidate_id)
+            log = self.candidate_logs[self._round_idx][candidate_id]
+            log.status = candidate.status
+            log.round_no = self.round_no
+
+            if len(candidate.tallies) == 0:
+                log.transfer = Decimal(0)
+            elif len(candidate.tallies) == 1:
+                log.transfer = candidate.tally
+            else:
+                log.transfer = candidate.tallies[-1] - candidate.tallies[-2]
 
     def _run_round(self):
         """
         Veic vienu skaitīšanas kārtu.
         """
+        self._do_run_round()
+        self._collect_round_log()
+
+    def _do_run_round(self):
+        """
+        Neizsaukt pa tiešo!
+        """
         self._round_idx += 1
+
+        self.event_logs.setdefault(self._round_idx, [])
 
         if self.num_elected >= self.num_seats:
             logger.warning("Visi mandāti jau ir piešķirti.")
@@ -213,6 +267,10 @@ class Election:
             )
 
             self.run_tally()
+
+            # Reģistrējam sākotnējo balsu kopsummu katram kandidātam
+            for candidate in self.candidates.values():
+                candidate.tally_after_first = candidate.tally
 
         ranked_candidates = list(c for c in self._get_candidates_by_tally() if c.is_running)
         assert ranked_candidates, "Nav kandidātu, kuri varētu tikt ievēlēti vai izslēgti."
@@ -257,7 +315,7 @@ class Election:
             eliminable = [
                 c.id
                 for c in reversed(ranked_candidates)
-                if c.tally == smallest_tally  # TODO floating point precizitātes jautājums!!
+                if quantize(c.tally) == quantize(smallest_tally)
             ]
 
             if len(eliminable) > 1:
@@ -307,7 +365,7 @@ class Election:
         self.piles.setdefault(first_pref, []).append(slice.id)
         return slice
 
-    def _build_next_slice(self, slice: Slice, weight: float, reason: Reason) -> Slice | None:
+    def _build_next_slice(self, slice: Slice, weight: Decimal, reason: Reason) -> Slice | None:
         ballot = self.ballots[slice.ballot_id]
         next_idx = slice.current_idx + 1
         while next_idx < len(ballot.prefs):
@@ -326,7 +384,7 @@ class Election:
                 self.slices[next_slice.id] = next_slice
                 self.ballot_slices.setdefault(ballot.id, []).append(next_slice.id)
                 self.piles.setdefault(candidate_id, []).append(next_slice.id)
-                logger.info(f"Pārdale par labu {candidate_id!r}: +{weight:.3f}")
+                self.log_event(f"Pārdale par labu {candidate_id!r}: +{weight:.3f}")
                 return next_slice
             next_idx += 1
 
@@ -360,7 +418,7 @@ class Election:
         """
         for candidate_id, pile in self.piles.items():
             candidate = self.candidates[candidate_id]
-            tally = math.fsum(
+            tally = Decimal(0) + sum(
                 self.slices[slice_id].weight for slice_id in pile
             )
             if not candidate.tallies or len(candidate.tallies) < self.round_no:
@@ -371,8 +429,10 @@ class Election:
     def elect(self, candidate_id: CandidateId, *, transfer_surplus: bool = True):
         candidate = self.candidates[candidate_id]
         candidate.status = "elected"
+        surplus: Decimal = candidate.tally - self.quota
 
-        surplus = candidate.tally - self.quota
+        self.log_event(f"Kandidāts {candidate_id!r} ievēlēts ar {candidate.tally:.2f}, pārpalikums {surplus:.2f}.")
+
         candidate.tally_before_done = candidate.tally
         logger.info(
             f"Kārtā Nr. {self.round_no} ievēlēts kandidāts {candidate_id!r} "
@@ -388,8 +448,8 @@ class Election:
         
         Sākotnējais piešķīrums tiek samazināts par (1 - pārdales koeficients),
         """
-        transfer_quotient = surplus / candidate.tally
-        remaining_quotient = 1.0 - transfer_quotient
+        transfer_quotient = Decimal(surplus) / candidate.tally
+        remaining_quotient = Decimal("1.0") - transfer_quotient
 
         logger.info(f"Pārdales koeficients: {transfer_quotient:.3f}.")
 
@@ -406,6 +466,7 @@ class Election:
             self._build_next_slice(slice, weight=transfer_quotient * original_weight, reason="elected")
 
     def eliminate(self, candidate_id: CandidateId, *, transfer_surplus: bool = True):
+        self.log_event(f"Kandidāts {candidate_id!r} izslēgts.")
         candidate = self.candidates[candidate_id]
         candidate.status = "eliminated"
 
@@ -423,7 +484,7 @@ class Election:
         for slice_id in pile:
             slice = self.slices[slice_id]
             transfer_value = slice.weight
-            slice.weight = 0.0
+            slice.weight = Decimal("0")
             self._build_next_slice(slice, weight=transfer_value, reason="eliminated")
 
     def _calc_num_ballots(self):
@@ -458,3 +519,7 @@ class Election:
         ):
             candidates = list(candidates_group)
             yield from candidates
+
+    def log_event(self, event: str):
+        logger.info(event)
+        self.event_logs[self.round_no - 1].append(event)

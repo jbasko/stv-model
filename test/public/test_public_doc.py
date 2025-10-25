@@ -1,6 +1,7 @@
-import pytest
+from decimal import Decimal
 
 from stv_model.example import get_example_election
+from stv_model.model import quantize
 
 
 def test_sākotnējā_dokumentā_iekļautais_piemērs():
@@ -45,6 +46,6 @@ def test_sākotnējā_dokumentā_iekļautais_piemērs():
     el._run_round()
 
     assert cc.status == "elected"
-    assert cc.tally == pytest.approx(9333.2666)
+    assert quantize(cc.tally) == quantize(Decimal("9333.266667"))
 
     el._run_round()
