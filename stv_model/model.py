@@ -451,7 +451,7 @@ class Election:
         transfer_quotient = Decimal(surplus) / candidate.tally
         remaining_quotient = Decimal("1.0") - transfer_quotient
 
-        logger.info(f"Pārdales koeficients: {transfer_quotient:.3f}.")
+        self.log_event(f"Pārdales koeficients: {transfer_quotient:.3f}.")
 
         pile = list(self.piles.get(candidate.id, []))
 
